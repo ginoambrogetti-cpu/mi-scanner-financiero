@@ -133,17 +133,42 @@ def descargar_masivo(tickers_tuple, period="1y"):
 def get_fundamentales_bulk(tickers_tuple):
     def fetch_one(t):
         try:
-            info = yf.Ticker(t).info
-            return t, {
-                "name":   info.get("longName") or info.get("shortName") or t,
-                "pe":     info.get("trailingPE"),
-                "pb":     info.get("priceToBook"),
-                "sector": info.get("sector", "—"),
-            }
-        except:
+            tk   = yf.Ticker(t)
+            info = tk.info or {}
+
+            # Nombre: varios campos posibles según tipo de activo
+            name = (info.get("longName") or info.get("shortName") or
+                    info.get("name") or info.get("description") or "")
+            # Para crypto Yahoo a veces devuelve el ticker en longName, limpiar
+            if not name or name.strip().upper() == t.strip().upper():
+                # Intentar fast_info como fallback
+                try:
+                    fi = tk.fast_info
+                    name = getattr(fi, "display_name", "") or ""
+                except:
+                    pass
+            if not name:
+                name = t  # último recurso
+
+            # P/E: trailingPE o forwardPE como fallback
+            pe = info.get("trailingPE") or info.get("forwardPE")
+            # Algunos activos devuelven "Infinity" o NaN — limpiar
+            if pe and (str(pe) in ("inf", "nan") or pe > 5000):
+                pe = None
+
+            # P/B: priceToBook
+            pb = info.get("priceToBook")
+            if pb and (str(pb) in ("inf", "nan") or pb < 0):
+                pb = None
+
+            sector = info.get("sector") or info.get("category") or "—"
+
+            return t, {"name": name, "pe": pe, "pb": pb, "sector": sector}
+        except Exception:
             return t, {"name": t, "pe": None, "pb": None, "sector": "—"}
+
     result = {}
-    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as ex:
         for ticker, data in ex.map(fetch_one, list(tickers_tuple)):
             result[ticker] = data
     return result
@@ -563,6 +588,12 @@ if "scanner_result" in st.session_state:
             (["P/E","P/B"] if mostrar_fund else []) +
             ["Score","Señal"]
         )
+        # Limpiar Nombre: si es igual al Ticker o está vacío, mostrar "—"
+        display["Nombre"] = display.apply(
+            lambda row: "—" if (not row["Nombre"] or
+                                str(row["Nombre"]).strip().upper() == str(row["Ticker"]).strip().upper())
+            else str(row["Nombre"])[:24], axis=1
+        )
         display["Precio"]     = display["Precio"].apply(fmt2)
         display["Día"]        = display["Día"].apply(fmt_pct)
         display["Semana"]     = display["Semana"].apply(fmt_pct)
@@ -584,8 +615,14 @@ if "scanner_result" in st.session_state:
             return direction
         display["Vol.Rel"]    = [fmt_vol(i) for i in range(len(display))]
         if mostrar_fund:
-            display["P/E"] = display["P/E"].apply(lambda x: f"{x:.1f}x" if x else "—")
-            display["P/B"] = display["P/B"].apply(lambda x: f"{x:.1f}x" if x else "—")
+            display["P/E"] = display["P/E"].apply(
+                lambda x: f"{x:.1f}x" if (x is not None and not np.isnan(float(x)) and float(x) < 5000) else "—"
+                if x is not None else "—"
+            )
+            display["P/B"] = display["P/B"].apply(
+                lambda x: f"{x:.1f}x" if (x is not None and not np.isnan(float(x)) and float(x) > 0) else "—"
+                if x is not None else "—"
+            )
         display["Score"] = display["Score"].apply(lambda x: f"{x:+d}" if x is not None else "—")
 
         def color_rsi_cell(val):
@@ -626,9 +663,10 @@ if "scanner_result" in st.session_state:
             return "color:#ffd740"
 
         def color_pe(val):
-            # Verde < 20x, amarillo 20-40x, rojo > 40x
+            if val == "—" or val is None: return "color:#3d5a72"
             try:
-                v = float(val.replace("x",""))
+                v = float(str(val).replace("x",""))
+                if v <= 0:  return "color:#3d5a72"
                 if v < 15:  return "background-color:#004d26;color:#69ffb0;font-weight:bold"
                 if v < 20:  return "color:#80ffbb"
                 if v < 40:  return "color:#ffd740"
@@ -636,9 +674,10 @@ if "scanner_result" in st.session_state:
             except: return "color:#3d5a72"
 
         def color_pb(val):
-            # Verde < 1.5x, amarillo 1.5-4x, rojo > 4x
+            if val == "—" or val is None: return "color:#3d5a72"
             try:
-                v = float(val.replace("x",""))
+                v = float(str(val).replace("x",""))
+                if v <= 0:  return "color:#3d5a72"
                 if v < 1.5: return "background-color:#004d26;color:#69ffb0;font-weight:bold"
                 if v < 4:   return "color:#ffd740"
                 return "background-color:#4d0000;color:#ff8a95;font-weight:bold"
