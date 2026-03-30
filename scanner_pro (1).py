@@ -409,113 +409,111 @@ GRUPOS = {
 }
 
 # ── Tickers Input ─────────────────────────────────────────────────────────────
-# Inicializar session state
-if "tickers_text" not in st.session_state:
-    st.session_state["tickers_text"] = (
-        "TSLA, AAPL, NVDA, AMZN, META, GOOGL, MSFT, INTC, AMD, TSM, "
-        "QCOM, AVGO, PLTR, CRM, ORCL, SNOW, BABA, AMGN, PFE, MRK, "
-        "ABBV, WMT, PG, PEP, JNJ, KO, MCD, HD, NKE, SBUX, "
-        "BAC, JPM, WFC, GS, V, MA, AXP, PYPL, NU, "
-        "BIOX, MELI, URA, NIO, RGTI, ILF, FSLR, ADBE, "
-        "BTC-USD, ETH-USD, BNB-USD, SOL-USD"
-    )
+DEFAULT_TICKERS = (
+    "TSLA, AAPL, NVDA, AMZN, META, GOOGL, MSFT, INTC, AMD, TSM, "
+    "QCOM, AVGO, PLTR, CRM, ORCL, BABA, AMGN, PFE, MRK, ABBV, "
+    "WMT, PG, PEP, JNJ, KO, MCD, HD, NKE, SBUX, BAC, "
+    "JPM, WFC, GS, V, MA, AXP, PYPL, NU, BIOX, MELI, "
+    "URA, NIO, RGTI, ILF, FSLR, ADBE, BTC-USD, ETH-USD, BNB-USD, SOL-USD"
+)
 
+# Inicializar estado — siempre garantizar que exista
+if "tickers_text" not in st.session_state or not st.session_state["tickers_text"]:
+    st.session_state["tickers_text"] = DEFAULT_TICKERS
 if "grupo_activo" not in st.session_state:
     st.session_state["grupo_activo"] = None
+# Flag para saber si un botón de grupo fue presionado en este ciclo
+if "_grupo_presionado" not in st.session_state:
+    st.session_state["_grupo_presionado"] = False
 
 with st.expander("⚙️ Configurar Tickers para Escanear", expanded=True):
 
-    st.markdown("""
-<div style="font-size:10px;color:#5a7a94;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:10px">
-  Seleccioná un grupo para REEMPLAZAR la lista, o usá los botones + para AGREGAR
-</div>""", unsafe_allow_html=True)
+    st.markdown("""<div style="font-size:10px;color:#5a7a94;letter-spacing:1.5px;
+    text-transform:uppercase;margin-bottom:10px">
+    Click en un grupo → reemplaza la lista · Botones + → agregan sin borrar
+    </div>""", unsafe_allow_html=True)
 
-    # ── Fila de grupos — REEMPLAZAR ───────────────────────────────────────────
-    btn_cols = st.columns(4)
     grupo_nombres = list(GRUPOS.keys())
 
-    # Fila 1
-    for i, nombre in enumerate(grupo_nombres[:4]):
-        if btn_cols[i].button(nombre, use_container_width=True, key=f"grp_{i}"):
-            st.session_state["tickers_text"] = GRUPOS[nombre]
-            st.session_state["grupo_activo"] = nombre
-            st.rerun()
-
-    btn_cols2 = st.columns(4)
-    for i, nombre in enumerate(grupo_nombres[4:8]):
-        if btn_cols2[i].button(nombre, use_container_width=True, key=f"grp_{i+4}"):
-            st.session_state["tickers_text"] = GRUPOS[nombre]
-            st.session_state["grupo_activo"] = nombre
-            st.rerun()
-
-    btn_cols3 = st.columns(3)
-    for i, nombre in enumerate(grupo_nombres[8:11]):
-        if btn_cols3[i].button(nombre, use_container_width=True, key=f"grp_{i+8}"):
-            st.session_state["tickers_text"] = GRUPOS[nombre]
-            st.session_state["grupo_activo"] = nombre
-            st.rerun()
+    # ── Botones de grupo (reemplazar) ─────────────────────────────────────────
+    for fila_inicio, fila_fin in [(0,4),(4,8),(8,11)]:
+        cols = st.columns(min(4, fila_fin - fila_inicio))
+        for j, i in enumerate(range(fila_inicio, min(fila_fin, len(grupo_nombres)))):
+            nombre = grupo_nombres[i]
+            es_activo = st.session_state.get("grupo_activo") == nombre
+            label = f"✓ {nombre}" if es_activo else nombre
+            if cols[j].button(label, use_container_width=True, key=f"grp_{i}"):
+                st.session_state["tickers_text"] = GRUPOS[nombre]
+                st.session_state["grupo_activo"] = nombre
+                st.session_state["_grupo_presionado"] = True
 
     # ── Botones agregar ───────────────────────────────────────────────────────
-    st.markdown("<div style='font-size:10px;color:#3d5a72;margin:8px 0 4px'>➕ Agregar al listado actual:</div>", unsafe_allow_html=True)
+    st.markdown("<div style='font-size:10px;color:#3d5a72;margin:10px 0 4px'>➕ Agregar al listado:</div>",
+                unsafe_allow_html=True)
+    add_nombres = ["₿ Top 15 Crypto","🏦 ETFs Clave","🇦🇷 Merval & CEDEARs",
+                   "🤖 Inteligencia Artificial","💳 Financieras & Bancos"]
+    add_labels  = ["+ Crypto","+ ETFs","+ Merval","+ IA","+ Financ."]
     add_cols = st.columns(5)
-    add_grupos = {
-        "+ Crypto":    GRUPOS["₿ Top 15 Crypto"],
-        "+ ETFs":      GRUPOS["🏦 ETFs Clave"],
-        "+ Merval":    GRUPOS["🇦🇷 Merval & CEDEARs"],
-        "+ IA":        GRUPOS["🤖 Inteligencia Artificial"],
-        "+ Financ.":   GRUPOS["💳 Financieras & Bancos"],
-    }
-    for i, (label, tks) in enumerate(add_grupos.items()):
+    for i, (label, nombre) in enumerate(zip(add_labels, add_nombres)):
         if add_cols[i].button(label, use_container_width=True, key=f"add_{i}"):
-            current = st.session_state.get("tickers_text", "")
+            tks_to_add = GRUPOS[nombre]
+            current  = st.session_state.get("tickers_text", "")
             existing = set(t.strip().upper() for t in current.split(",") if t.strip())
-            new_tks  = [t.strip() for t in tks.split(",") if t.strip().upper() not in existing]
-            st.session_state["tickers_text"] = current.rstrip(", ") + (", " if current.strip() else "") + ", ".join(new_tks)
-            st.rerun()
+            new_tks  = [t.strip() for t in tks_to_add.split(",")
+                        if t.strip() and t.strip().upper() not in existing]
+            sep = ", " if current.strip() else ""
+            st.session_state["tickers_text"] = current.rstrip(", ") + sep + ", ".join(new_tks)
+            st.session_state["_grupo_presionado"] = True
 
-    # ── Grupo activo badge ────────────────────────────────────────────────────
-    if st.session_state.get("grupo_activo"):
-        st.markdown(f"""<div style="display:inline-block;background:rgba(0,200,240,.1);border:1px solid rgba(0,200,240,.3);
-        border-radius:6px;padding:4px 10px;font-size:10px;color:#00c8f0;margin:6px 0">
-        ✓ Grupo activo: <b>{st.session_state["grupo_activo"]}</b></div>""", unsafe_allow_html=True)
-
-    # ── Texto de tickers ──────────────────────────────────────────────────────
-    # NO usamos key= para evitar que Streamlit ignore el value= tras rerun()
-    def _on_ticker_change():
-        st.session_state["tickers_text"] = st.session_state["_ticker_area"]
+    # ── Area de texto ─────────────────────────────────────────────────────────
+    # CLAVE: el text_area SIEMPRE muestra session_state["tickers_text"].
+    # Cuando el usuario escribe directamente, lo sincronizamos via on_change.
+    # Cuando un botón cambia session_state, el value= se respeta porque
+    # NO usamos key= en el widget (evita el bug de Streamlit Cloud).
+    edited = st.text_area(
+        "Tickers separados por coma (editá o usá los grupos):",
+        value=st.session_state["tickers_text"],
+        height=100,
+        # Sin key= intencional — así value= siempre manda
+    )
+    # Si el usuario editó manualmente (texto diferente al estado)
+    if edited != st.session_state["tickers_text"]:
+        st.session_state["tickers_text"] = edited
         st.session_state["grupo_activo"] = None
 
-    st.text_area(
-        "Editá manualmente o usá los grupos de arriba:",
-        value=st.session_state["tickers_text"],
-        height=90,
-        key="_ticker_area",
-        on_change=_on_ticker_change,
-    )
+    # Grupo activo badge
+    if st.session_state.get("grupo_activo"):
+        st.markdown(
+            f'<div style="display:inline-block;background:rgba(0,200,240,.1);'
+            f'border:1px solid rgba(0,200,240,.3);border-radius:6px;padding:4px 10px;'
+            f'font-size:10px;color:#00c8f0;margin:4px 0">'
+            f'✓ Grupo: <b>{st.session_state["grupo_activo"]}</b></div>',
+            unsafe_allow_html=True
+        )
 
+    # Calcular lista final
+    _raw = st.session_state.get("tickers_text", "")
     tickers_list = list(dict.fromkeys(
-        t.strip().upper() for t in st.session_state["tickers_text"].split(",") if t.strip()
+        t.strip().upper() for t in _raw.split(",") if t.strip()
     ))
     if len(tickers_list) > 150:
         tickers_list = tickers_list[:150]
         st.warning("Se toman los primeros 150 tickers.")
 
-    # Conteo por tipo
     n_crypto = sum(1 for t in tickers_list if "-USD" in t)
     n_arg    = sum(1 for t in tickers_list if t.endswith(".BA"))
     n_usa    = len(tickers_list) - n_crypto - n_arg
     st.caption(
-        f"📊 {len(tickers_list)} / 150 tickers  ·  "
-        f"🇺🇸 {n_usa} USA  ·  ₿ {n_crypto} Crypto  ·  🇦🇷 {n_arg} ARG  ·  "
+        f"📊 {len(tickers_list)} / 150  ·  🇺🇸 {n_usa} USA  ·  "
+        f"₿ {n_crypto} Crypto  ·  🇦🇷 {n_arg} ARG  ·  "
         f"~{max(5, len(tickers_list)//5):.0f}s estimados"
     )
 
-# Recalcular tickers_list fuera del expander (por si el expander no se ejecutó)
+# tickers_list disponible globalmente desde session_state
 tickers_list = list(dict.fromkeys(
-    t.strip().upper() for t in st.session_state.get("tickers_text", "").split(",") if t.strip()
-))
-if len(tickers_list) > 150:
-    tickers_list = tickers_list[:150]
+    t.strip().upper() for t in st.session_state.get("tickers_text", DEFAULT_TICKERS).split(",")
+    if t.strip()
+))[:150]
 
 col_btn1, col_btn2 = st.columns([4,1])
 run = col_btn1.button(f"🚀 ESCANEAR {len(tickers_list)} TICKERS", type="primary", use_container_width=True)
