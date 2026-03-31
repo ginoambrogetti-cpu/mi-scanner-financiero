@@ -239,6 +239,8 @@ def analizar_ticker(ticker, raw, multi, fund):
         "señal":     lbl,
         "señal_bg":  bg,
         "señal_fg":  fg,
+        "dist52h":   (precio - float(close.max())) / float(close.max()) if len(close) > 0 else None,
+        "dist52l":   (precio - float(close.min())) / float(close.min()) if len(close) > 0 else None,
     }
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
@@ -511,8 +513,8 @@ with st.expander("⚙️ Configurar Tickers para Escanear", expanded=True):
 
 # tickers_list disponible globalmente desde session_state
 tickers_list = list(dict.fromkeys(
-    t.strip().upper() for t in st.session_state.get("tickers_text", DEFAULT_TICKERS).split(",")
-    if t.strip()
+    t.strip().upper() for t in st.session_state.get("tickers_text", DEFAULT_TICKERS).replace("\n",",").split(",")
+    if t.strip() and len(t.strip()) >= 1
 ))[:150]
 
 col_btn1, col_btn2 = st.columns([4,1])
@@ -574,160 +576,227 @@ if "scanner_result" in st.session_state:
 
     # ══ TAB TABLA ═════════════════════════════════════════════════════════════
     with tab_tabla:
-        disp_cols = ["ticker","name","precio","dia","semana","mes","rsi","macd_bull",
-                     "dist_wma21","dist150","dist200","vol_rel","strat1","strat2","strat3"]
-        if mostrar_fund: disp_cols += ["pe","pb"]
-        disp_cols += ["score","señal"]
 
-        display = df[disp_cols].copy()
-        display.columns = (
-            ["Ticker","Nombre","Precio","Día","Semana","Mes","RSI","MACD",
-             "vsWMA21","vsEMA150","vsEMA200","Vol.Rel","Estrat.1","Estrat.2","Estrat.3"] +
-            (["P/E","P/B"] if mostrar_fund else []) +
-            ["Score","Señal"]
-        )
-        # Limpiar Nombre: si es igual al Ticker o está vacío, mostrar "—"
-        display["Nombre"] = display.apply(
-            lambda row: "—" if (not row["Nombre"] or
-                                str(row["Nombre"]).strip().upper() == str(row["Ticker"]).strip().upper())
-            else str(row["Nombre"])[:24], axis=1
-        )
-        display["Precio"]     = display["Precio"].apply(fmt2)
-        display["Día"]        = display["Día"].apply(fmt_pct)
-        display["Semana"]     = display["Semana"].apply(fmt_pct)
-        display["Mes"]        = display["Mes"].apply(fmt_pct)
-        display["RSI"]        = display["RSI"].apply(lambda x: f"{x:.1f}" if x else "—")
-        display["MACD"]       = display["MACD"].apply(lambda x: "🟢 Bull" if x else "🔴 Bear")
-        display["vsWMA21"]    = display["vsWMA21"].apply(fmt_pct)
-        display["vsEMA150"]   = display["vsEMA150"].apply(fmt_pct)
-        display["vsEMA200"]   = display["vsEMA200"].apply(fmt_pct)
-        # Vol.Rel: muestra señal de compra/venta basada en dirección del precio + volumen alto
-        def fmt_vol(row_idx):
-            vol = df.iloc[row_idx]["vol_rel"]
-            bull = df.iloc[row_idx]["macd_bull"]
-            score_v = df.iloc[row_idx]["score"]
-            if vol > 1.6:
-                direction = "🐋 C" if score_v >= 2 else ("🐋 V" if score_v <= -2 else "🐋 N")
-            else:
-                direction = f"{vol:.1f}x"
-            return direction
-        display["Vol.Rel"]    = [fmt_vol(i) for i in range(len(display))]
-        if mostrar_fund:
-            display["P/E"] = display["P/E"].apply(
-                lambda x: f"{x:.1f}x" if (x is not None and not np.isnan(float(x)) and float(x) < 5000) else "—"
-                if x is not None else "—"
+        # ── Controles rápidos encima de la tabla ──────────────────────────────
+        ctrl1, ctrl2, ctrl3, ctrl4 = st.columns([2,2,2,2])
+        solo_opps = ctrl1.toggle("🎯 Solo oportunidades (Score ≥ 3)", value=False)
+        solo_ventas = ctrl2.toggle("⚠️ Solo alertas (Score ≤ -3)", value=False)
+        mostrar_52w = ctrl3.toggle("📏 Mostrar 52w High/Low", value=False)
+        vista = ctrl4.selectbox("Vista", ["Completa","Compacta (sin estrategias)","Solo técnico"], label_visibility="collapsed")
+
+        # Aplicar filtros rápidos
+        df_view = df.copy()
+        if solo_opps:   df_view = df_view[df_view["score"] >= 3]
+        if solo_ventas: df_view = df_view[df_view["score"] <= -3]
+
+        if df_view.empty:
+            st.info("Sin resultados con ese filtro.")
+        else:
+            # ── Construir columnas según vista ────────────────────────────────
+            if vista == "Compacta (sin estrategias)":
+                disp_cols = ["ticker","name","precio","dia","semana","mes","rsi",
+                             "dist_wma21","dist150","dist200","vol_rel"]
+                if mostrar_fund: disp_cols += ["pe","pb"]
+                if mostrar_52w:  disp_cols += ["dist52h","dist52l"]
+                disp_cols += ["score","señal"]
+                col_names = (["Ticker","Nombre","Precio","Día","Semana","Mes","RSI",
+                               "vsWMA21","vsEMA150","vsEMA200","Vol.Rel"] +
+                              (["P/E","P/B"] if mostrar_fund else []) +
+                              (["52w↑","52w↓"] if mostrar_52w else []) +
+                              ["Score","Señal"])
+            elif vista == "Solo técnico":
+                disp_cols = ["ticker","precio","dia","semana","rsi","macd_bull",
+                             "dist_wma21","dist150","dist200","vol_rel","score","señal"]
+                col_names  = ["Ticker","Precio","Día","Semana","RSI","MACD",
+                               "vsWMA21","vsEMA150","vsEMA200","Vol.Rel","Score","Señal"]
+            else:  # Completa
+                disp_cols = ["ticker","name","precio","dia","semana","mes","rsi","macd_bull",
+                             "dist_wma21","dist150","dist200","vol_rel",
+                             "strat1","strat2","strat3"]
+                if mostrar_fund: disp_cols += ["pe","pb"]
+                if mostrar_52w:  disp_cols += ["dist52h","dist52l"]
+                disp_cols += ["score","señal"]
+                col_names = (["Ticker","Nombre","Precio","Día","Semana","Mes","RSI","MACD",
+                               "vsWMA21","vsEMA150","vsEMA200","Vol.Rel","S1","S2","S3"] +
+                              (["P/E","P/B"] if mostrar_fund else []) +
+                              (["52w↑","52w↓"] if mostrar_52w else []) +
+                              ["Score","Señal"])
+
+            display = df_view[disp_cols].copy()
+            display.columns = col_names
+
+            # ── Formatear ─────────────────────────────────────────────────────
+            if "Nombre" in display.columns:
+                display["Nombre"] = display.apply(
+                    lambda r: "—" if (not r["Nombre"] or
+                        str(r["Nombre"]).strip().upper() == str(r["Ticker"]).strip().upper())
+                    else str(r["Nombre"])[:22], axis=1
+                )
+            display["Precio"] = display["Precio"].apply(fmt2)
+            for c in ["Día","Semana","Mes","vsWMA21","vsEMA150","vsEMA200"]:
+                if c in display.columns: display[c] = display[c].apply(fmt_pct)
+            display["RSI"] = display["RSI"].apply(lambda x: f"{x:.0f}" if x else "—")
+            if "MACD" in display.columns:
+                display["MACD"] = display["MACD"].apply(lambda x: "🟢" if x else "🔴")
+
+            # Vol.Rel con ícono compacto
+            def fmt_vol_compact(row_idx):
+                vol   = df_view.iloc[row_idx]["vol_rel"]
+                score_v = df_view.iloc[row_idx]["score"]
+                if vol > 1.6:
+                    return "🐋🟢" if score_v >= 2 else ("🐋🔴" if score_v <= -2 else "🐋")
+                return f"{vol:.1f}x"
+            display["Vol.Rel"] = [fmt_vol_compact(i) for i in range(len(display))]
+
+            # Estrategias → íconos compactos
+            def fmt_strat(val):
+                if "COMPRAR" in str(val) or "COMPRA" in str(val): return "🟢"
+                if "VENDER"  in str(val): return "🔴"
+                return "🟡"
+            for sc in ["S1","S2","S3"]:
+                if sc in display.columns: display[sc] = display[sc].apply(fmt_strat)
+
+            # 52w
+            if "52w↑" in display.columns:
+                display["52w↑"] = display["52w↑"].apply(fmt_pct)
+                display["52w↓"] = display["52w↓"].apply(fmt_pct)
+
+            # Fundamentales
+            if "P/E" in display.columns:
+                display["P/E"] = display["P/E"].apply(
+                    lambda x: f"{x:.0f}x" if (x and not np.isnan(float(x)) and 0 < float(x) < 5000) else "—")
+            if "P/B" in display.columns:
+                display["P/B"] = display["P/B"].apply(
+                    lambda x: f"{x:.1f}x" if (x and not np.isnan(float(x)) and float(x) > 0) else "—")
+
+            display["Score"] = display["Score"].apply(lambda x: f"{x:+d}" if x is not None else "—")
+
+            # ── Colores ───────────────────────────────────────────────────────
+            def color_rsi_cell(val):
+                try:
+                    v = float(val)
+                    if v < 30:  return "background-color:#004d26;color:#69ffb0;font-weight:bold"
+                    if v < 40:  return "color:#80ffbb;font-weight:bold"
+                    if v > 70:  return "background-color:#4d0000;color:#ff8a95;font-weight:bold"
+                    if v > 60:  return "color:#ff9100"
+                    return "color:#ffd740"
+                except: return ""
+
+            def color_pct(val):
+                try:
+                    n = float(str(val).replace("%","").replace("+",""))
+                    if n > 5:  return "color:#00e676;font-weight:bold"
+                    if n > 0:  return "color:#69ffb0"
+                    if n < -5: return "color:#ff3d57;font-weight:bold"
+                    if n < 0:  return "color:#ff8a95"
+                    return "color:#ffd740"
+                except: return ""
+
+            def color_score(val):
+                try:
+                    v = int(str(val).replace("+",""))
+                    if v >= 4:  return "color:#00e676;font-weight:bold"
+                    if v >= 2:  return "color:#69ffb0"
+                    if v <= -4: return "color:#ff3d57;font-weight:bold"
+                    if v <= -2: return "color:#ff8a95"
+                    return "color:#ffd740"
+                except: return ""
+
+            def color_señal(val):
+                if "COMPRA FUERTE" in str(val): return "background-color:#004d26;color:#69ffb0;font-weight:bold"
+                if "COMPRAR"       in str(val): return "background-color:#003d1a;color:#80ffbb;font-weight:bold"
+                if "REDUCIR"       in str(val): return "background-color:#3d2000;color:#ff9100;font-weight:bold"
+                if "VENDER"        in str(val): return "background-color:#4d0000;color:#ff8a95;font-weight:bold"
+                return "color:#ffd740"
+
+            def color_pe(val):
+                if val in ("—", None): return "color:#3d5a72"
+                try:
+                    v = float(str(val).replace("x",""))
+                    if v <= 0:  return "color:#3d5a72"
+                    if v < 15:  return "background-color:#004d26;color:#69ffb0;font-weight:bold"
+                    if v < 20:  return "color:#80ffbb"
+                    if v < 40:  return "color:#ffd740"
+                    return "background-color:#4d0000;color:#ff8a95;font-weight:bold"
+                except: return "color:#3d5a72"
+
+            def color_pb(val):
+                if val in ("—", None): return "color:#3d5a72"
+                try:
+                    v = float(str(val).replace("x",""))
+                    if v <= 0:  return "color:#3d5a72"
+                    if v < 1.5: return "background-color:#004d26;color:#69ffb0;font-weight:bold"
+                    if v < 4:   return "color:#ffd740"
+                    return "background-color:#4d0000;color:#ff8a95;font-weight:bold"
+                except: return "color:#3d5a72"
+
+            def color_strat_icon(val):
+                if val == "🟢": return "background-color:#003d1a;font-weight:bold"
+                if val == "🔴": return "background-color:#4d0000;font-weight:bold"
+                return "color:#ffd740"
+
+            def color_vol_icon(val):
+                if "🐋🟢" in str(val): return "background-color:#003d1a;color:#69ffb0;font-weight:bold"
+                if "🐋🔴" in str(val): return "background-color:#4d0000;color:#ff8a95;font-weight:bold"
+                if "🐋"    in str(val): return "background-color:#00405c;color:#bfe5ff;font-weight:bold"
+                try:
+                    v = float(str(val).replace("x",""))
+                    if v >= 1.6: return "color:#00c8f0;font-weight:bold"
+                except: pass
+                return "color:#5a7a94"
+
+            pct_cols_present = [c for c in ["Día","Semana","Mes","vsWMA21","vsEMA150","vsEMA200","52w↑","52w↓"]
+                                 if c in display.columns]
+            strat_cols_present = [c for c in ["S1","S2","S3"] if c in display.columns]
+
+            styled = display.style.map(color_rsi_cell, subset=["RSI"])
+            if pct_cols_present:
+                styled = styled.map(color_pct, subset=pct_cols_present)
+            styled = (styled
+                .map(color_score,    subset=["Score"])
+                .map(color_señal,    subset=["Señal"])
+                .map(color_vol_icon, subset=["Vol.Rel"])
             )
-            display["P/B"] = display["P/B"].apply(
-                lambda x: f"{x:.1f}x" if (x is not None and not np.isnan(float(x)) and float(x) > 0) else "—"
-                if x is not None else "—"
-            )
-        display["Score"] = display["Score"].apply(lambda x: f"{x:+d}" if x is not None else "—")
+            if strat_cols_present:
+                styled = styled.map(color_strat_icon, subset=strat_cols_present)
+            if "P/E" in display.columns:
+                styled = styled.map(color_pe, subset=["P/E"])
+            if "P/B" in display.columns:
+                styled = styled.map(color_pb, subset=["P/B"])
 
-        def color_rsi_cell(val):
-            try:
-                v = float(val)
-                if v < 30:  return "background-color:#004d26;color:#69ffb0;font-weight:bold"
-                if v < 40:  return "color:#80ffbb;font-weight:bold"
-                if v > 70:  return "background-color:#4d0000;color:#ff8a95;font-weight:bold"
-                if v > 60:  return "color:#ff9100"
-                return "color:#ffd740"
-            except: return ""
+            # Altura adaptable
+            n_rows  = len(display)
+            altura  = min(800, max(300, n_rows * 38 + 60))
 
-        def color_pct(val):
-            try:
-                n = float(val.replace("%","").replace("+",""))
-                if n > 5:  return "color:#00e676;font-weight:bold"
-                if n > 0:  return "color:#69ffb0"
-                if n < -5: return "color:#ff3d57;font-weight:bold"
-                if n < 0:  return "color:#ff8a95"
-                return "color:#ffd740"
-            except: return ""
+            st.dataframe(styled, use_container_width=True, hide_index=True, height=altura)
 
-        def color_score(val):
-            try:
-                v = int(val.replace("+",""))
-                if v >= 4:  return "color:#00e676;font-weight:bold"
-                if v >= 2:  return "color:#69ffb0"
-                if v <= -4: return "color:#ff3d57;font-weight:bold"
-                if v <= -2: return "color:#ff8a95"
-                return "color:#ffd740"
-            except: return ""
-
-        def color_señal(val):
-            if "COMPRA FUERTE" in str(val): return "background-color:#004d26;color:#69ffb0;font-weight:bold"
-            if "COMPRAR"       in str(val): return "background-color:#003d1a;color:#80ffbb;font-weight:bold"
-            if "REDUCIR"       in str(val): return "background-color:#3d2000;color:#ff9100;font-weight:bold"
-            if "VENDER"        in str(val): return "background-color:#4d0000;color:#ff8a95;font-weight:bold"
-            return "color:#ffd740"
-
-        def color_pe(val):
-            if val == "—" or val is None: return "color:#3d5a72"
-            try:
-                v = float(str(val).replace("x",""))
-                if v <= 0:  return "color:#3d5a72"
-                if v < 15:  return "background-color:#004d26;color:#69ffb0;font-weight:bold"
-                if v < 20:  return "color:#80ffbb"
-                if v < 40:  return "color:#ffd740"
-                return "background-color:#4d0000;color:#ff8a95;font-weight:bold"
-            except: return "color:#3d5a72"
-
-        def color_pb(val):
-            if val == "—" or val is None: return "color:#3d5a72"
-            try:
-                v = float(str(val).replace("x",""))
-                if v <= 0:  return "color:#3d5a72"
-                if v < 1.5: return "background-color:#004d26;color:#69ffb0;font-weight:bold"
-                if v < 4:   return "color:#ffd740"
-                return "background-color:#4d0000;color:#ff8a95;font-weight:bold"
-            except: return "color:#3d5a72"
-
-        def color_vol(val):
-            # 🐋 C = compra institucional (verde), 🐋 V = venta institucional (rojo), 🐋 N = neutral (cyan)
-            if "🐋 C" in str(val): return "background-color:#003d1a;color:#69ffb0;font-weight:bold"
-            if "🐋 V" in str(val): return "background-color:#4d0000;color:#ff8a95;font-weight:bold"
-            if "🐋 N" in str(val): return "background-color:#00405c;color:#bfe5ff;font-weight:bold"
-            try:
-                v = float(str(val).replace("x",""))
-                if v >= 1.6: return "color:#00c8f0;font-weight:bold"
-            except: pass
-            return "color:#5a7a94"
-
-        pct_cols = ["Día","Semana","Mes","vsWMA21","vsEMA150","vsEMA200"]
-        def color_strat(val):
-            if "COMPRAR" in str(val) or "COMPRA" in str(val):
-                return "background-color:#003d1a;color:#69ffb0;font-weight:bold"
-            if "VENDER" in str(val): return "background-color:#4d0000;color:#ff8a95;font-weight:bold"
-            return "color:#ffd740"
-
-        strat_cols = ["Estrat.1","Estrat.2","Estrat.3"]
-        styled = (
-            display.style
-            .map(color_rsi_cell, subset=["RSI"])
-            .map(color_pct,      subset=pct_cols)
-            .map(color_score,    subset=["Score"])
-            .map(color_señal,    subset=["Señal"])
-            .map(color_vol,      subset=["Vol.Rel"])
-            .map(color_strat,    subset=strat_cols)
-        )
-        if mostrar_fund:
-            styled = styled.map(color_pe, subset=["P/E"]).map(color_pb, subset=["P/B"])
-
-        st.dataframe(styled, use_container_width=True, hide_index=True, height=700)
-
-        # Leyenda Vol.Rel
-        st.markdown("""
-<div style="display:flex;gap:16px;padding:8px 0;font-size:10px;color:#5a7a94">
-  <span style="color:#5a7a94">Vol.Rel:</span>
-  <span style="background:#003d1a;color:#69ffb0;padding:1px 7px;border-radius:4px;font-weight:700">🐋 C</span> Volumen inusual + señal alcista
-  <span style="background:#4d0000;color:#ff8a95;padding:1px 7px;border-radius:4px;font-weight:700">🐋 V</span> Volumen inusual + señal bajista
-  <span style="background:#00405c;color:#bfe5ff;padding:1px 7px;border-radius:4px;font-weight:700">🐋 N</span> Volumen inusual + neutral
-  <span style="color:#ffd740">· P/E verde &lt;20x · amarillo 20–40x · rojo &gt;40x · P/B verde &lt;1.5x · rojo &gt;4x · Estrat.1=SMA Cross · Estrat.2=Momentum · Estrat.3=Mean Rev.</span>
+            # Leyenda compacta
+            st.markdown("""
+<div style="display:flex;flex-wrap:wrap;gap:10px;padding:6px 0;font-size:10px;color:#5a7a94">
+  <span><b style="color:#e2f0ff">Señal:</b> 🟢=Comprar · 🔴=Vender · 🟡=Esperar</span>
+  <span><b style="color:#e2f0ff">Vol:</b> 🐋🟢=Compra inst. · 🐋🔴=Venta inst. · 🐋=Neutro</span>
+  <span><b style="color:#e2f0ff">S1</b>=SMA Cross · <b style="color:#e2f0ff">S2</b>=Momentum · <b style="color:#e2f0ff">S3</b>=Mean Rev.</span>
+  <span><b style="color:#e2f0ff">52w↑</b>=dist. máx anual · <b style="color:#e2f0ff">52w↓</b>=dist. mín anual</span>
 </div>""", unsafe_allow_html=True)
+
+            # Resumen rápido
+            n_buy  = df_view[df_view["score"] >= 3].shape[0]
+            n_sell = df_view[df_view["score"] <= -3].shape[0]
+            n_wait = len(df_view) - n_buy - n_sell
+            st.markdown(
+                f'<div style="display:flex;gap:16px;padding:4px 0;font-size:11px">'
+                f'<span style="color:#69ffb0">🟢 {n_buy} oportunidades</span>'
+                f'<span style="color:#ff8a95">🔴 {n_sell} alertas</span>'
+                f'<span style="color:#ffd740">🟡 {n_wait} esperando</span>'
+                f'</div>',
+                unsafe_allow_html=True
+            )
 
         csv_buf = io.StringIO()
         df.to_csv(csv_buf, index=False)
-        st.download_button("⬇️ Exportar CSV completo", data=csv_buf.getvalue(),
-                           file_name=f"scanner_{pd.Timestamp.now().strftime('%Y%m%d_%H%M')}.csv", mime="text/csv")
+        st.download_button("⬇️ Exportar CSV", data=csv_buf.getvalue(),
+                           file_name=f"scanner_{pd.Timestamp.now().strftime('%Y%m%d_%H%M')}.csv",
+                           mime="text/csv")
         if errores:
             st.warning(f"⚠️ No se pudieron cargar: {', '.join(errores)}")
 
