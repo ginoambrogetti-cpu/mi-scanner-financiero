@@ -329,9 +329,17 @@ col3.metric("QQQ",
             f"${qqq.get('price',0):,.0f}",
             fmt_pct(qqq.get('chg')))
 col4.metric("VIX", f"{vix_val:.1f}" if vix_val else "—", vix_lbl)
-col5.metric("RSI SPY", f"{spy.get('rsi',0):.1f}" if spy.get('rsi') else "—",
-            "sobrecomprado" if spy.get('rsi') and spy['rsi'] > 70 else ("sobrevendido" if spy.get('rsi') and spy['rsi'] < 30 else "neutral"))
-col6.metric("RSI QQQ", f"{qqq.get('rsi',0):.1f}" if qqq.get('rsi') else "—")
+_spy_rsi = spy.get("rsi")
+_spy_lbl = ("sobrecomprado 🔴" if _spy_rsi and _spy_rsi > 70
+             else ("sobrevendido 🟢" if _spy_rsi and _spy_rsi < 30
+             else "neutral"))
+col5.metric("RSI SPY", f"{_spy_rsi:.1f}" if _spy_rsi else "—", _spy_lbl)
+# Etiqueta RSI QQQ igual que SPY
+_qqq_rsi = qqq.get("rsi")
+_qqq_lbl = ("sobrecomprado 🔴" if _qqq_rsi and _qqq_rsi > 70
+             else ("sobrevendido 🟢" if _qqq_rsi and _qqq_rsi < 30
+             else "neutral"))
+col6.metric("RSI QQQ", f"{_qqq_rsi:.1f}" if _qqq_rsi else "—", _qqq_lbl)
 
 # ── FILA 2: Distancia SMA200 + Crypto ────────────────────────────────────────
 st.markdown("""<div style="display:flex;align-items:center;gap:10px;margin:8px 0 6px">
